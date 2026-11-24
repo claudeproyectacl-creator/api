@@ -2,7 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 
 dotenv.config();
 
@@ -25,15 +25,16 @@ interface AssistantRequestBody {
   financialContext?: unknown;
 }
 
-const SYSTEM_INSTRUCTION = `Eres el asistente financiero personal de FINDI ("Student Expense Tracker"), una app para estudiantes (15-25 años) en Sant Vicenç dels Horts (Barcelona, España).
+const SYSTEM_INSTRUCTION = `Eres el asistente de FINDI ("Student Expense Tracker"), pensado para estudiantes (15-25 años) en Sant Vicenç dels Horts (Barcelona, España).
 
-REGLAS ESTRICTAS:
-1. Responde siempre en castellano claro, cercano y sin tecnicismos financieros complicados. Usa formato numérico español (coma decimal, ej. 12,50 €) y fechas dd/mm/yyyy.
-2. Usa ÚNICAMENTE los datos reales incluidos en el contexto JSON del usuario. NUNCA inventes movimientos, importes, categorías, suscripciones ni saldos.
-3. Si el usuario pregunta algo para lo que no hay datos suficientes en el contexto (por ejemplo, si aún no tiene movimientos registrados o no hay datos del mes anterior), dilo de forma clara y honesta.
-4. Da consejos de ahorro sencillos, realistas y adaptados a un estudiante basándote solo en sus cifras reales.
-5. No puedes modificar ni eliminar datos directamente. Si el usuario te pide explícitamente registrar un movimiento (gasto o ingreso), eliminar un movimiento existente o aportar dinero a un objetivo, devuelve "proposedAction" con los datos exactos y pide confirmación en "reply". En cualquier consulta normal, pon "proposedAction": { "type": "none" }.
-6. Recuerda brevemente cuando des recomendaciones que tus consejos son orientativos.`;
+CÓMO DEBES RESPONDER:
+1. Intenta responder siempre de forma útil, amable y natural a CUALQUIER mensaje o pregunta del usuario, en castellano claro y cercano.
+2. Saludos y conversación (por ejemplo "Hola", "Buenos días", "¿Qué tal?", "Gracias", "¿Qué sabes hacer?"): responde con cercanía. Si tiene movimientos este mes, puedes darle un pequeño vistazo rápido opcional o preguntarle en qué quiere que le ayudes hoy.
+3. Preguntas generales (dudas sobre cómo ahorrar, métodos como la regla 50/30/20, consejos para estudiantes, o cualquier otra consulta general): responde con explicaciones sencillas, prácticas y directas, intentando ayudar siempre.
+4. Preguntas sobre SUS datos personales (sus gastos, ingresos, saldo, categorías, suscripciones, objetivos o comparación con el mes pasado): usa ÚNICAMENTE los datos reales del JSON del contexto (por privacidad no recibes su nombre ni las notas de sus movimientos, solo importes, fechas, categorías y objetivos). NUNCA inventes movimientos, importes, categorías ni cifras. Si no hay datos suficientes en el JSON para calcular lo que pide, dilo con honestidad sin inventar nada.
+5. Formato: usa euros con coma decimal (ej. 12,50 €) y fechas dd/mm/yyyy cuando menciones importes o fechas.
+6. Acciones sobre datos: no puedes modificar ni borrar nada por tu cuenta. Solo si el usuario pide explícitamente añadir un movimiento, borrar uno existente o meter dinero en un objetivo, incluye "proposedAction" con los datos exactos y pídele confirmación en "reply". En saludos, preguntas generales y consultas normales, usa "proposedAction": { "type": "none" }.
+7. Cuando des recomendaciones financieras personalizadas, recuerda brevemente que tus consejos son orientativos.`;
 
 function sanitizeHistory(raw: unknown): AssistantHistoryItem[] {
   if (!Array.isArray(raw)) return [];
@@ -101,74 +102,99 @@ ${contextStr}
 HISTORIAL RECIENTE:
 ${historyBlock}
 
-PREGUNTA ACTUAL DEL ESTUDIANTE:
+MENSAJE ACTUAL DEL ESTUDIANTE:
 ${question}`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            reply: {
-              type: Type.STRING,
-              description: "Respuesta clara en castellano basada solo en los datos reales.",
-            },
-            proposedAction: {
-              type: Type.OBJECT,
-              description: "Solo usar cuando el usuario pida explícitamente crear o modificar un dato.",
-              properties: {
-                type: {
-                  type: Type.STRING,
-                  description: "Uno de: none, create_transaction, add_goal_funds, delete_transaction",
-                },
-                transactionType: {
-                  type: Type.STRING,
-                  description: "gasto o ingreso (solo para create_transaction)",
-                },
-                amount: {
-                  type: Type.NUMBER,
-                  description: "Importe en euros positivo",
-                },
-                categoryName: {
-                  type: Type.STRING,
-                  description: "Nombre de la categoría existente",
-                },
-                date: {
-                  type: Type.STRING,
-                  description: "Fecha YYYY-MM-DD",
-                },
-                note: {
-                  type: Type.STRING,
-                  description: "Nota opcional del movimiento",
-                },
-                goalId: {
-                  type: Type.STRING,
-                  description: "ID del objetivo (solo para add_goal_funds)",
-                },
-                goalName: {
-                  type: Type.STRING,
-                  description: "Nombre del objetivo (solo para add_goal_funds)",
-                },
-                transactionId: {
-                  type: Type.STRING,
-                  description: "ID del movimiento (solo para delete_transaction)",
-                },
-                summaryLabel: {
-                  type: Type.STRING,
-                  description: "Resumen corto para mostrar en el botón de confirmación",
-                },
+    const callModel = () =>
+      ai.models.generateContent({
+        model: "gemini-4-hydrogen",
+        contents: prompt,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              reply: {
+                type: Type.STRING,
+                description: "Respuesta amable y útil en castellano.",
               },
-              required: ["type"],
+              proposedAction: {
+                type: Type.OBJECT,
+                description:
+                  "Solo usar cuando el usuario pida explícitamente crear o modificar un dato.",
+                properties: {
+                  type: {
+                    type: Type.STRING,
+                    description:
+                      "Uno de: none, create_transaction, add_goal_funds, delete_transaction",
+                  },
+                  transactionType: {
+                    type: Type.STRING,
+                    description: "gasto o ingreso (solo para create_transaction)",
+                  },
+                  amount: {
+                    type: Type.NUMBER,
+                    description: "Importe en euros positivo",
+                  },
+                  categoryName: {
+                    type: Type.STRING,
+                    description: "Nombre de la categoría existente",
+                  },
+                  date: {
+                    type: Type.STRING,
+                    description: "Fecha YYYY-MM-DD",
+                  },
+                  note: {
+                    type: Type.STRING,
+                    description: "Nota opcional del movimiento",
+                  },
+                  goalId: {
+                    type: Type.STRING,
+                    description: "ID del objetivo (solo para add_goal_funds)",
+                  },
+                  goalName: {
+                    type: Type.STRING,
+                    description: "Nombre del objetivo (solo para add_goal_funds)",
+                  },
+                  transactionId: {
+                    type: Type.STRING,
+                    description: "ID del movimiento (solo para delete_transaction)",
+                  },
+                  summaryLabel: {
+                    type: Type.STRING,
+                    description: "Resumen corto para mostrar en el botón de confirmación",
+                  },
+                },
+                required: ["type"],
+              },
             },
+            required: ["reply"],
           },
-          required: ["reply"],
         },
-      },
-    });
+      });
+
+    let response;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        response = await callModel();
+        break;
+      } catch (err) {
+        lastError = err;
+        const status = (err as { status?: number })?.status;
+        const retryable = status === undefined || status >= 500;
+        if (!retryable || attempt === 2) {
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      }
+    }
+
+    if (!response) {
+      throw lastError ?? new Error("No response from model");
+    }
 
     const rawText = (response.text ?? "").trim();
     if (!rawText) {

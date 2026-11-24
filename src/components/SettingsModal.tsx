@@ -1,6 +1,19 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { Download, FileJson, FileSpreadsheet, MapPin, Moon, Sun, Trash2, X } from 'lucide-react';
+import {
+  Cloud,
+  Download,
+  FileJson,
+  FileSpreadsheet,
+  HardDrive,
+  LogIn,
+  LogOut,
+  MapPin,
+  Moon,
+  Sun,
+  Trash2,
+  X,
+} from 'lucide-react';
 import type { AppSettings, FindiDataStore } from '../types/finance';
 import {
   exportStoreAsJSON,
@@ -12,17 +25,25 @@ import { ConfirmModal } from './ConfirmModal';
 interface SettingsModalProps {
   open: boolean;
   store: FindiDataStore;
+  userEmail: string | null;
+  isAuthenticated: boolean;
   onClose: () => void;
   onUpdateSettings: (next: AppSettings) => void;
   onResetAllData: () => void;
+  onSignOut: () => void;
+  onOpenLogin: () => void;
 }
 
 export function SettingsModal({
   open,
   store,
+  userEmail,
+  isAuthenticated,
   onClose,
   onUpdateSettings,
   onResetAllData,
+  onSignOut,
+  onOpenLogin,
 }: SettingsModalProps) {
   const shouldReduceMotion = useReducedMotion();
 
@@ -34,6 +55,7 @@ export function SettingsModal({
   const [error, setError] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
   const [confirmWipeOpen, setConfirmWipeOpen] = useState(false);
+  const [confirmSignOutOpen, setConfirmSignOutOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -193,7 +215,9 @@ export function SettingsModal({
             {error && <p className="text-sm font-medium text-[#EF4444]">{error}</p>}
             {savedNotice && (
               <p className="text-sm font-medium text-[#10B981]">
-                Ajustes guardados en este dispositivo.
+                {isAuthenticated
+                  ? 'Ajustes guardados y sincronizados en tu cuenta.'
+                  : 'Ajustes guardados en este dispositivo.'}
               </p>
             )}
 
@@ -205,6 +229,65 @@ export function SettingsModal({
             </button>
           </form>
 
+          {/* Cuenta y sincronización */}
+          <div className="mt-7 pt-6 border-t border-black/10 dark:border-[#333336] space-y-3">
+            <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">
+              Cuenta y sincronización
+            </h3>
+            {isAuthenticated ? (
+              <div className="rounded-2xl bg-[#f5f5f7] dark:bg-black/50 border border-black/10 dark:border-[#333336] p-4 space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#10B981]/15 text-[#10B981]">
+                    <Cloud className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">
+                      Sesión iniciada
+                    </p>
+                    <p className="truncate text-xs text-[#6e6e73] dark:text-[#86868b]">
+                      {userEmail || 'Cuenta sincronizada en la nube'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setConfirmSignOutOpen(true)}
+                  className="flex w-full min-h-[44px] items-center justify-center gap-2 rounded-full border border-black/15 dark:border-[#6e6e73] px-4 py-2 text-xs font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.97] transition-transform"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Cerrar sesión
+                </button>
+              </div>
+            ) : (
+              <div className="rounded-2xl bg-[#f5f5f7] dark:bg-black/50 border border-black/10 dark:border-[#333336] p-4 space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/5 dark:bg-white/10 text-[#6e6e73] dark:text-[#86868b]">
+                    <HardDrive className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">
+                      Modo local (sin cuenta)
+                    </p>
+                    <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">
+                      Tus datos se guardan solo en este dispositivo.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenLogin();
+                  }}
+                  className="flex w-full min-h-[44px] items-center justify-center gap-2 rounded-full bg-[#10B981]/15 border border-[#10B981]/30 px-4 py-2 text-xs font-semibold text-[#10B981] hover:bg-[#10B981]/25 active:scale-[0.97] transition-transform"
+                >
+                  <LogIn className="w-4 h-4" />
+                  Iniciar sesión / Crear cuenta
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Exportar y privacidad */}
           <div className="mt-7 pt-6 border-t border-black/10 dark:border-[#333336] space-y-4">
             <div>
@@ -212,8 +295,9 @@ export function SettingsModal({
                 Tus datos y copias de seguridad
               </h3>
               <p className="mt-1 text-xs leading-relaxed text-[#6e6e73] dark:text-[#86868b]">
-                Tus movimientos y objetivos se guardan únicamente en este navegador. Exporta una
-                copia cuando quieras.
+                {isAuthenticated
+                  ? 'Tus datos están sincronizados en tu cuenta. También puedes descargar una copia en CSV o JSON cuando quieras.'
+                  : 'Tus movimientos y objetivos se guardan únicamente en este navegador. Exporta una copia cuando quieras.'}
               </p>
             </div>
 
@@ -251,9 +335,28 @@ export function SettingsModal({
       </div>
 
       <ConfirmModal
+        open={confirmSignOutOpen}
+        title="¿Cerrar sesión?"
+        description="Saldrás de tu cuenta en este dispositivo. Tus datos seguirán guardados de forma segura en la nube para cuando vuelvas a entrar."
+        confirmLabel="Cerrar sesión"
+        cancelLabel="Seguir conectado"
+        destructive={false}
+        onCancel={() => setConfirmSignOutOpen(false)}
+        onConfirm={() => {
+          setConfirmSignOutOpen(false);
+          onClose();
+          onSignOut();
+        }}
+      />
+
+      <ConfirmModal
         open={confirmWipeOpen}
         title="¿Borrar todos tus datos?"
-        description="Se eliminarán permanentemente todos tus movimientos, categorías personalizadas, objetivos de ahorro, ajustes e historial del asistente en este dispositivo. Esta acción no se puede deshacer."
+        description={
+          isAuthenticated
+            ? 'Se eliminarán permanentemente todos tus movimientos, categorías personalizadas, objetivos de ahorro, ajustes e historial del asistente tanto de tu cuenta en la nube como de este dispositivo. Esta acción no se puede deshacer.'
+            : 'Se eliminarán permanentemente todos tus movimientos, categorías personalizadas, objetivos de ahorro, ajustes e historial del asistente en este dispositivo. Esta acción no se puede deshacer.'
+        }
         confirmLabel="Sí, borrar todo"
         onCancel={() => setConfirmWipeOpen(false)}
         onConfirm={() => {

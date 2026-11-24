@@ -25,6 +25,7 @@ import {
 import { useCountUp } from '../hooks/useCountUp';
 import { FindiLogo } from './FindiLogo';
 import { CategoryIcon } from './CategoryIcon';
+import { HomeSkeleton } from './HomeSkeleton';
 
 interface HomeViewProps {
   transactions: Transaction[];
@@ -33,6 +34,7 @@ interface HomeViewProps {
   settings: AppSettings;
   selectedMonth: string;
   celebrateCoin: boolean;
+  isLoading?: boolean;
   heroRef: RefObject<HTMLDivElement | null>;
   onChangeMonth: (nextMonth: string) => void;
   onAddTransaction: () => void;
@@ -48,6 +50,7 @@ export function HomeView({
   settings,
   selectedMonth,
   celebrateCoin,
+  isLoading = false,
   heroRef,
   onChangeMonth,
   onAddTransaction,
@@ -57,18 +60,22 @@ export function HomeView({
   const [chartMode, setChartMode] = useState<'barras' | 'circular'>('barras');
 
   const { scrollY } = useScroll();
-  const heroLogoScale = useTransform(scrollY, [0, 180], [1, 0.72]);
-  const heroLogoOpacity = useTransform(scrollY, [0, 180], [1, 0.15]);
-  const heroLogoY = useTransform(scrollY, [0, 180], [0, -18]);
+  const heroLogoScale = useTransform(scrollY, [0, 24, 180], [1, 1, 0.72]);
+  const heroLogoOpacity = useTransform(scrollY, [0, 24, 180], [1, 1, 0.15]);
+  const heroLogoY = useTransform(scrollY, [0, 24, 180], [0, 0, -18]);
 
   const summary = computeMonthlySummary(transactions, categories, selectedMonth);
-  const animatedBalance = useCountUp(summary.balance, 650);
-  const animatedIncome = useCountUp(summary.totalIncome, 550);
-  const animatedExpenses = useCountUp(summary.totalExpenses, 550);
+  const animatedBalance = useCountUp(isLoading ? 0 : summary.balance, 650);
+  const animatedIncome = useCountUp(isLoading ? 0 : summary.totalIncome, 550);
+  const animatedExpenses = useCountUp(isLoading ? 0 : summary.totalExpenses, 550);
 
   const primaryGoal = goals.find((g) => g.isPrimary) ?? goals[0] ?? null;
   const primaryGoalMetrics = primaryGoal ? computeGoalMetrics(primaryGoal) : null;
-  const animatedGoalSaved = useCountUp(primaryGoal?.savedAmount ?? 0, 600);
+  const animatedGoalSaved = useCountUp(isLoading ? 0 : primaryGoal?.savedAmount ?? 0, 600);
+
+  if (isLoading) {
+    return <HomeSkeleton />;
+  }
 
   const categoryMap = new Map(categories.map((c) => [c.id, c]));
   const recentMonthTxs = [...transactions]
@@ -88,11 +95,11 @@ export function HomeView({
   let cumulativeFraction = 0;
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-8">
       {/* Hero Brand Stage */}
       <section
         ref={heroRef}
-        className="relative flex flex-col items-center text-center pt-4 pb-6 md:pt-8 md:pb-10"
+        className="relative flex flex-col items-center text-center pt-2 pb-3 md:pt-4 md:pb-5"
       >
         <motion.div
           style={
@@ -110,15 +117,15 @@ export function HomeView({
         </motion.div>
 
         <motion.div
-          initial={shouldReduceMotion ? false : { opacity: 0, y: 20 }}
+          initial={shouldReduceMotion ? false : { opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.55, delay: 0.1, ease: APPLE_EASE }}
-          className="mt-4 max-w-2xl"
+          transition={{ duration: 0.45, delay: 0.08, ease: APPLE_EASE }}
+          className="mt-3 max-w-2xl"
         >
           <p className="text-xs font-medium tracking-wide text-[#10B981]">
             Student Expense Tracker
           </p>
-          <h1 className="mt-1 text-4xl sm:text-6xl font-semibold tracking-[-0.03em] text-[#1d1d1f] dark:text-[#f5f5f7] [text-wrap:balance]">
+          <h1 className="mt-1 text-3xl sm:text-5xl font-semibold tracking-[-0.03em] text-[#1d1d1f] dark:text-[#f5f5f7] [text-wrap:balance]">
             {settings.userName ? `Hola, ${settings.userName}` : 'Tu dinero, claro'}
           </h1>
           <p className="mt-2 inline-flex items-center gap-1.5 text-sm text-[#6e6e73] dark:text-[#86868b]">

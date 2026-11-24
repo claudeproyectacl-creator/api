@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
   ArrowLeftRight,
   Bot,
@@ -25,11 +26,27 @@ import {
   isValidISODate,
 } from './utils/format';
 import {
+  CHAT_STORAGE_KEY,
   clearAllUserData,
+  createEmptyStore,
   generateId,
   loadStore,
   saveStore,
 } from './utils/storage';
+import { auth, testConnection } from './services/firebase';
+import {
+  deleteAllCloudUserData,
+  deleteCloudGoal,
+  deleteCloudTransaction,
+  ensureUserAccountInitialized,
+  migrateLocalStoreToCloud,
+  saveCloudCategory,
+  saveCloudGoal,
+  saveCloudSettings,
+  saveCloudTransaction,
+  setCloudPrimaryGoal,
+  subscribeUserData,
+} from './services/firestoreStore';
 import { FindiLogo } from './components/FindiLogo';
 import { HomeView } from './components/HomeView';
 import { TransactionsView } from './components/TransactionsView';
@@ -37,8 +54,17 @@ import { SavingsView } from './components/SavingsView';
 import { AssistantView } from './components/AssistantView';
 import { TransactionModal } from './components/TransactionModal';
 import { SettingsModal } from './components/SettingsModal';
+import { MobileSplash } from './components/MobileSplash';
+import { AuthScreen } from './components/AuthScreen';
+import { ConfirmModal } from './components/ConfirmModal';
+import { HomeSkeleton } from './components/HomeSkeleton';
 
 type TabKey = 'inicio' | 'movimientos' | 'ahorro' | 'asistente';
+type AuthStatus = 'checking' | 'authenticated' | 'local' | 'unauthenticated';
+
+const SPLASH_SEEN_KEY = 'findi_splash_seen';
+const LOCAL_MODE_KEY = 'findi_local_mode';
+const MIGRATION_FLAG_PREFIX = 'findi_migrated_';
 
 const NAV_ITEMS: { key: TabKey; label: string; icon: typeof Home }[] = [
   { key: 'inicio', label: 'Inicio', icon: Home },
@@ -47,8 +73,29 @@ const NAV_ITEMS: { key: TabKey; label: string; icon: typeof Home }[] = [
   { key: 'asistente', label: 'Asistente', icon: Bot },
 ];
 
+function hasMeaningfulLocalData(local: FindiDataStore): boolean {
+  return (
+    local.transactions.length > 0 ||
+    local.goals.length > 0 ||
+    local.categories.some((c) => c.isCustom)
+  );
+}
+
 export default function App() {
   const shouldReduceMotion = useReducedMotion();
+
+  const [showSplash, setShowSplash] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const isMobile = window.innerWidth < 768;
+    const alreadySeen = window.sessionStorage.getItem(SPLASH_SEEN_KEY) === '1';
+    return isMobile && !alreadySeen;
+  });
+
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('checking');
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [isCloudLoading, setIsCloudLoading] = useState<boolean>(false);
+  const [cloudError, setCloudError] = useState<Error | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const [store, setStore] = useState<FindiDataStore>(() => loadStore());
   const [activeTab, setActiveTab] = useState<TabKey>('inicio');
@@ -57,6 +104,11 @@ export default function App() {
   const [txModalOpen, setTxModalOpen] = useState(false);
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const [migrationPrompt, setMigrationPrompt] = useState<{
+    uid: string;
+    snapshot: FindiDataStore;
+  } | null>(null);
 
   const [celebrateCoin, setCelebrateCoin] = useState(false);
   const [scrolledPastHero, setScrolledPastHero] = useState(false);
@@ -72,10 +124,112 @@ export default function App() {
     }
   }, [store.settings.theme]);
 
-  // Persist store on every change
+  // Persist to localStorage ONLY when in local mode
   useEffect(() => {
-    saveStore(store);
-  }, [store]);
+    if (authStatus === 'local') {
+      saveStore(store);
+    }
+  }, [store, authStatus]);
+
+  // Listen to Firebase Auth state & subscribe to user's private Firestore data
+  useEffect(() => {
+    let unsubFirestore: (() => void) | null = null;
+    let cancelled = false;
+
+    const cleanupFirestore = () => {
+      if (unsubFirestore) {
+        unsubFirestore();
+        unsubFirestore = null;
+      }
+    };
+
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      cleanupFirestore();
+      if (cancelled) return;
+
+      if (!user) {
+        setFirebaseUser(null);
+        setIsCloudLoading(false);
+        setCloudError(null);
+        const wantsLocal =
+          typeof window !== 'undefined' &&
+          window.sessionStorage.getItem(LOCAL_MODE_KEY) === '1';
+        if (wantsLocal) {
+          setStore(loadStore());
+          setAuthStatus('local');
+        } else {
+          const savedLocalTheme = loadStore().settings.theme;
+          setStore({
+            ...createEmptyStore(),
+            settings: { ...createEmptyStore().settings, theme: savedLocalTheme },
+          });
+          setAuthStatus('unauthenticated');
+        }
+        return;
+      }
+
+      setFirebaseUser(user);
+      setAuthStatus('authenticated');
+      setIsCloudLoading(true);
+      setCloudError(null);
+
+      try {
+        await ensureUserAccountInitialized(user.uid);
+        if (cancelled) return;
+
+        // Prompt once if user has local data before cloud sign-in
+        try {
+          const migrationKey = `${MIGRATION_FLAG_PREFIX}${user.uid}`;
+          const alreadyChecked = window.localStorage.getItem(migrationKey) === 'done';
+          if (!alreadyChecked) {
+            const localSnapshot = loadStore();
+            if (hasMeaningfulLocalData(localSnapshot)) {
+              setMigrationPrompt({ uid: user.uid, snapshot: localSnapshot });
+            } else {
+              window.localStorage.setItem(migrationKey, 'done');
+            }
+          }
+        } catch {
+          // Ignore storage access failures
+        }
+
+        unsubFirestore = subscribeUserData(user.uid, {
+          onTransactions: (items) => {
+            setStore((prev) => ({ ...prev, transactions: items }));
+          },
+          onCategories: (items) => {
+            setStore((prev) => ({ ...prev, categories: items }));
+          },
+          onGoals: (items) => {
+            setStore((prev) => ({ ...prev, goals: items }));
+          },
+          onSettings: (settings) => {
+            setStore((prev) => ({ ...prev, settings }));
+          },
+          onInitialReady: () => {
+            if (!cancelled) setIsCloudLoading(false);
+          },
+          onError: (err) => {
+            if (!cancelled) {
+              setIsCloudLoading(false);
+              setCloudError(err);
+            }
+          },
+        });
+      } catch (err) {
+        if (!cancelled) {
+          setIsCloudLoading(false);
+          setCloudError(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      cleanupFirestore();
+      unsubAuth();
+    };
+  }, [retryNonce]);
 
   // Track scroll for hero-to-topbar logo docking on Inicio
   useEffect(() => {
@@ -91,7 +245,84 @@ export default function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, [activeTab]);
 
-  // Scroll to top when changing tabs
+  // Surface critical Firestore errors cleanly to ErrorBoundary after splash
+  if (cloudError && !showSplash) {
+    throw cloudError;
+  }
+
+  const handleSplashComplete = useCallback(() => {
+    try {
+      window.sessionStorage.setItem(SPLASH_SEEN_KEY, '1');
+    } catch {
+      // Ignore storage errors
+    }
+    setShowSplash(false);
+  }, []);
+
+  const handleSplashRetry = useCallback(() => {
+    setCloudError(null);
+    void testConnection();
+    setRetryNonce((n) => n + 1);
+  }, []);
+
+  const handleContinueLocal = useCallback(() => {
+    try {
+      window.sessionStorage.setItem(LOCAL_MODE_KEY, '1');
+    } catch {
+      // Ignore storage errors
+    }
+    setStore(loadStore());
+    setAuthStatus('local');
+  }, []);
+
+  const handleOpenLogin = useCallback(() => {
+    try {
+      window.sessionStorage.removeItem(LOCAL_MODE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    setAuthStatus('unauthenticated');
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      window.sessionStorage.removeItem(LOCAL_MODE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    try {
+      window.localStorage.removeItem(CHAT_STORAGE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    await signOut(auth);
+    setActiveTab('inicio');
+  }, []);
+
+  const handleConfirmMigration = async () => {
+    if (!migrationPrompt) return;
+    const { uid, snapshot } = migrationPrompt;
+    setMigrationPrompt(null);
+    try {
+      await migrateLocalStoreToCloud(uid, snapshot);
+      window.localStorage.setItem(`${MIGRATION_FLAG_PREFIX}${uid}`, 'done');
+      const freshLocal = createEmptyStore();
+      saveStore({ ...freshLocal, settings: snapshot.settings });
+    } catch (err) {
+      setCloudError(err instanceof Error ? err : new Error(String(err)));
+    }
+  };
+
+  const handleDismissMigration = () => {
+    if (!migrationPrompt) return;
+    try {
+      window.localStorage.setItem(`${MIGRATION_FLAG_PREFIX}${migrationPrompt.uid}`, 'done');
+    } catch {
+      // Ignore storage errors
+    }
+    setMigrationPrompt(null);
+  };
+
   const handleNavigate = (tab: TabKey) => {
     setActiveTab(tab);
     window.scrollTo({ top: 0, behavior: shouldReduceMotion ? 'auto' : 'smooth' });
@@ -110,39 +341,41 @@ export default function App() {
     categoryId: string;
     note: string;
   }) => {
-    setStore((prev) => {
-      if (payload.id) {
-        return {
-          ...prev,
-          transactions: prev.transactions.map((t) =>
-            t.id === payload.id
-              ? {
-                  ...t,
-                  type: payload.type,
-                  amount: payload.amount,
-                  date: payload.date,
-                  categoryId: payload.categoryId,
-                  note: payload.note,
-                }
-              : t
-          ),
+    const isNew = !payload.id;
+    const txToSave: Transaction = payload.id
+      ? {
+          ...(store.transactions.find((t) => t.id === payload.id) ?? {
+            id: payload.id,
+            createdAt: new Date().toISOString(),
+          }),
+          type: payload.type,
+          amount: payload.amount,
+          date: payload.date,
+          categoryId: payload.categoryId,
+          note: payload.note,
+        }
+      : {
+          id: generateId(),
+          type: payload.type,
+          amount: payload.amount,
+          date: payload.date,
+          categoryId: payload.categoryId,
+          note: payload.note,
+          createdAt: new Date().toISOString(),
         };
-      }
 
-      const nextTx: Transaction = {
-        id: generateId(),
-        type: payload.type,
-        amount: payload.amount,
-        date: payload.date,
-        categoryId: payload.categoryId,
-        note: payload.note,
-        createdAt: new Date().toISOString(),
-      };
-      return {
-        ...prev,
-        transactions: [nextTx, ...prev.transactions],
-      };
-    });
+    setStore((prev) => ({
+      ...prev,
+      transactions: isNew
+        ? [txToSave, ...prev.transactions]
+        : prev.transactions.map((t) => (t.id === txToSave.id ? txToSave : t)),
+    }));
+
+    if (authStatus === 'authenticated' && firebaseUser) {
+      void saveCloudTransaction(firebaseUser.uid, txToSave, isNew).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    }
 
     setSelectedMonth(payload.date.slice(0, 7));
   };
@@ -152,6 +385,12 @@ export default function App() {
       ...prev,
       transactions: prev.transactions.filter((t) => t.id !== id),
     }));
+
+    if (authStatus === 'authenticated' && firebaseUser) {
+      void deleteCloudTransaction(firebaseUser.uid, id).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    }
   };
 
   const handleCreateCategory = (payload: {
@@ -171,6 +410,13 @@ export default function App() {
       ...prev,
       categories: [...prev.categories, created],
     }));
+
+    if (authStatus === 'authenticated' && firebaseUser) {
+      void saveCloudCategory(firebaseUser.uid, created).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    }
+
     return created;
   };
 
@@ -189,18 +435,26 @@ export default function App() {
       isPrimary: payload.isPrimary || store.goals.length === 0,
       createdAt: new Date().toISOString(),
     };
+    const previousGoals = store.goals;
+
     setStore((prev) => ({
       ...prev,
       goals: [
-        ...prev.goals.map((g) =>
-          created.isPrimary ? { ...g, isPrimary: false } : g
-        ),
+        ...prev.goals.map((g) => (created.isPrimary ? { ...g, isPrimary: false } : g)),
         created,
       ],
     }));
+
+    if (authStatus === 'authenticated' && firebaseUser) {
+      void saveCloudGoal(firebaseUser.uid, created, previousGoals, true).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    }
   };
 
   const handleUpdateGoal = (updated: SavingsGoal) => {
+    const previousGoals = store.goals;
+
     setStore((prev) => ({
       ...prev,
       goals: prev.goals.map((g) => {
@@ -208,21 +462,32 @@ export default function App() {
         return updated.isPrimary ? { ...g, isPrimary: false } : g;
       }),
     }));
+
+    if (authStatus === 'authenticated' && firebaseUser) {
+      void saveCloudGoal(firebaseUser.uid, updated, previousGoals, false).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    }
   };
 
   const handleAdjustGoalFunds = (goalId: string, delta: number) => {
-    let hitCompleted = false;
+    const target = store.goals.find((g) => g.id === goalId);
+    if (!target) return;
+
+    const nextSaved = Math.max(0, Math.round((target.savedAmount + delta) * 100) / 100);
+    const hitCompleted = target.savedAmount < target.targetAmount && nextSaved >= target.targetAmount;
+    const updatedGoal: SavingsGoal = { ...target, savedAmount: nextSaved };
+
     setStore((prev) => ({
       ...prev,
-      goals: prev.goals.map((g) => {
-        if (g.id !== goalId) return g;
-        const nextSaved = Math.max(0, Math.round((g.savedAmount + delta) * 100) / 100);
-        if (g.savedAmount < g.targetAmount && nextSaved >= g.targetAmount) {
-          hitCompleted = true;
-        }
-        return { ...g, savedAmount: nextSaved };
-      }),
+      goals: prev.goals.map((g) => (g.id === goalId ? updatedGoal : g)),
     }));
+
+    if (authStatus === 'authenticated' && firebaseUser) {
+      void saveCloudGoal(firebaseUser.uid, updatedGoal, store.goals, false).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    }
 
     if (hitCompleted) {
       triggerCoinCelebration();
@@ -230,6 +495,7 @@ export default function App() {
   };
 
   const handleSetPrimaryGoal = (goalId: string) => {
+    const snapshotGoals = store.goals;
     setStore((prev) => ({
       ...prev,
       goals: prev.goals.map((g) => ({
@@ -237,19 +503,32 @@ export default function App() {
         isPrimary: g.id === goalId,
       })),
     }));
+
+    if (authStatus === 'authenticated' && firebaseUser) {
+      void setCloudPrimaryGoal(firebaseUser.uid, goalId, snapshotGoals).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    }
   };
 
   const handleDeleteGoal = (goalId: string) => {
-    setStore((prev) => {
-      const remaining = prev.goals.filter((g) => g.id !== goalId);
-      if (remaining.length > 0 && !remaining.some((g) => g.isPrimary)) {
-        remaining[0] = { ...remaining[0], isPrimary: true };
-      }
-      return {
-        ...prev,
-        goals: remaining,
-      };
-    });
+    const remaining = store.goals.filter((g) => g.id !== goalId);
+    let nextPrimaryGoalId: string | null = null;
+    if (remaining.length > 0 && !remaining.some((g) => g.isPrimary)) {
+      remaining[0] = { ...remaining[0], isPrimary: true };
+      nextPrimaryGoalId = remaining[0].id;
+    }
+
+    setStore((prev) => ({
+      ...prev,
+      goals: remaining,
+    }));
+
+    if (authStatus === 'authenticated' && firebaseUser) {
+      void deleteCloudGoal(firebaseUser.uid, goalId, nextPrimaryGoalId).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    }
   };
 
   const handleUpdateSettings = (next: AppSettings) => {
@@ -257,11 +536,29 @@ export default function App() {
       ...prev,
       settings: next,
     }));
+
+    if (authStatus === 'authenticated' && firebaseUser) {
+      void saveCloudSettings(firebaseUser.uid, next).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    }
   };
 
   const handleResetAllData = () => {
-    const fresh = clearAllUserData();
-    setStore(fresh);
+    if (authStatus === 'authenticated' && firebaseUser) {
+      try {
+        window.localStorage.removeItem(CHAT_STORAGE_KEY);
+      } catch {
+        // Ignore storage errors
+      }
+      setStore(createEmptyStore());
+      void deleteAllCloudUserData(firebaseUser.uid).catch((err) =>
+        setCloudError(err instanceof Error ? err : new Error(String(err)))
+      );
+    } else {
+      const fresh = clearAllUserData();
+      setStore(fresh);
+    }
     setSelectedMonth(getCurrentMonthKey());
     setActiveTab('inicio');
   };
@@ -320,6 +617,35 @@ export default function App() {
   const hasCompletedGoal = store.goals.some(
     (g) => g.targetAmount > 0 && g.savedAmount >= g.targetAmount
   );
+
+  const splashDataReady =
+    authStatus === 'local' ||
+    authStatus === 'unauthenticated' ||
+    (authStatus === 'authenticated' && !isCloudLoading && !cloudError);
+
+  if (showSplash) {
+    return (
+      <MobileSplash
+        isDataReady={splashDataReady}
+        onComplete={handleSplashComplete}
+        onRetry={handleSplashRetry}
+      />
+    );
+  }
+
+  if (authStatus === 'checking') {
+    return (
+      <div className="min-h-screen bg-[#f5f5f7] dark:bg-black px-4 sm:px-6 pt-16">
+        <div className="mx-auto max-w-6xl">
+          <HomeSkeleton />
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus === 'unauthenticated') {
+    return <AuthScreen onContinueLocal={handleContinueLocal} />;
+  }
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] dark:bg-black dark:text-[#f5f5f7] transition-colors duration-300">
@@ -401,7 +727,12 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="mx-auto max-w-6xl px-4 sm:px-6 pt-4 pb-24 md:pb-12">
+      <motion.main
+        initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: [0.28, 0.11, 0.32, 1] }}
+        className="mx-auto max-w-6xl px-4 sm:px-6 pt-4 pb-24 md:pb-12"
+      >
         {activeTab === 'inicio' && (
           <HomeView
             transactions={store.transactions}
@@ -410,6 +741,7 @@ export default function App() {
             settings={store.settings}
             selectedMonth={selectedMonth}
             celebrateCoin={celebrateCoin}
+            isLoading={authStatus === 'authenticated' && isCloudLoading}
             heroRef={heroRef}
             onChangeMonth={setSelectedMonth}
             onAddTransaction={() => {
@@ -458,7 +790,7 @@ export default function App() {
             onExecuteProposedAction={handleExecuteProposedAction}
           />
         )}
-      </main>
+      </motion.main>
 
       {/* Floating Quick-Add Button (+) */}
       <button
@@ -518,9 +850,24 @@ export default function App() {
       <SettingsModal
         open={settingsOpen}
         store={store}
+        userEmail={firebaseUser?.email ?? null}
+        isAuthenticated={authStatus === 'authenticated'}
         onClose={() => setSettingsOpen(false)}
         onUpdateSettings={handleUpdateSettings}
         onResetAllData={handleResetAllData}
+        onSignOut={() => void handleSignOut()}
+        onOpenLogin={handleOpenLogin}
+      />
+
+      <ConfirmModal
+        open={migrationPrompt !== null}
+        title="¿Subir tus datos locales a tu cuenta?"
+        description="Hemos encontrado movimientos u objetivos guardados en este dispositivo sin cuenta. ¿Quieres subirlos a tu cuenta en la nube o mantenerlos separados?"
+        confirmLabel="Sí, subir a la nube"
+        cancelLabel="No, mantener separados"
+        destructive={false}
+        onConfirm={() => void handleConfirmMigration()}
+        onCancel={handleDismissMigration}
       />
     </div>
   );

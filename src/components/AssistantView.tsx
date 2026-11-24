@@ -83,7 +83,6 @@ export function AssistantView({
         importeEur: tx.amount,
         fecha: tx.date,
         categoria: categoryMap.get(tx.categoryId) ?? 'Otros',
-        nota: tx.note || '',
       }));
 
     const goalsContext = goals.map((g) => {
@@ -107,7 +106,6 @@ export function AssistantView({
       fechaActual: getTodayISO(),
       mesConsultado: activeMonth,
       ciudad: 'Sant Vicenç dels Horts (Barcelona)',
-      nombreUsuario: settings.userName || null,
       limiteGastoMensualEur: settings.monthlyLimit,
       resumenMesActual: {
         ingresosTotalesEur: summary.totalIncome,
@@ -252,7 +250,7 @@ export function AssistantView({
             Asistente FINDI
           </h1>
           <p className="mt-1 text-sm text-[#6e6e73] dark:text-[#86868b]">
-            Pregunta sobre tus gastos, ahorro y suscripciones usando únicamente tus datos reales.
+            Pregúntame lo que quieras: desde un saludo o dudas de ahorro hasta el análisis de tus datos reales.
           </p>
         </div>
 
@@ -288,10 +286,10 @@ export function AssistantView({
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">
-                    ¿Qué quieres revisar hoy?
+                    ¿En qué te ayudo hoy?
                   </p>
                   <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">
-                    Toca una pregunta rápida o escribe la tuya abajo.
+                    Salúdame, hazme cualquier pregunta o prueba una consulta rápida.
                   </p>
                 </div>
               </div>
@@ -370,9 +368,32 @@ export function AssistantView({
           )}
 
           {loading && (
-            <div className="flex items-start">
-              <div className="rounded-3xl bg-[#f5f5f7] dark:bg-black/60 border border-black/8 dark:border-[#333336] px-4 py-3 text-sm text-[#6e6e73] dark:text-[#86868b]">
-                Analizando tus datos reales...
+            <div className="flex items-start" aria-live="polite" aria-label="El asistente está pensando">
+              <div className="inline-flex items-center gap-2.5 rounded-3xl bg-[#f5f5f7] dark:bg-black/60 border border-black/8 dark:border-[#333336] px-4 py-3 text-sm text-[#6e6e73] dark:text-[#86868b]">
+                <span>Pensando</span>
+                <span className="inline-flex items-center gap-1" aria-hidden="true">
+                  {[0, 1, 2].map((dot) => (
+                    <motion.span
+                      key={dot}
+                      className="h-1.5 w-1.5 rounded-full bg-[#10B981]"
+                      animate={
+                        shouldReduceMotion
+                          ? { opacity: 0.7 }
+                          : { opacity: [0.3, 1, 0.3], y: [0, -3, 0] }
+                      }
+                      transition={
+                        shouldReduceMotion
+                          ? undefined
+                          : {
+                              duration: 0.9,
+                              repeat: Infinity,
+                              delay: dot * 0.16,
+                              ease: 'easeInOut',
+                            }
+                      }
+                    />
+                  ))}
+                </span>
               </div>
             </div>
           )}
@@ -388,7 +409,7 @@ export function AssistantView({
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Escribe tu pregunta sobre tus gastos o ahorro..."
+            placeholder="Escribe lo que quieras (ej. Hola, ¿cómo ahorro este mes?)..."
             disabled={loading}
             maxLength={1000}
             className="flex-1 min-h-[46px] rounded-full bg-[#f5f5f7] dark:bg-black/60 border border-black/12 dark:border-[#6e6e73]/60 px-4 text-sm text-[#1d1d1f] dark:text-[#f5f5f7] placeholder:text-[#86868b] focus:outline-none focus:border-[#10B981]"

@@ -1,0 +1,101 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Root account marker document for an authenticated FINDI user (no PII stored).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "createdAt", "updatedAt"]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "User UI preferences and optional monthly spending target.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userName": { "type": "string", "maxLength": 40 },
+        "monthlyLimit": { "type": "number" },
+        "theme": { "type": "string", "enum": ["dark", "light"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "userName", "theme", "createdAt", "updatedAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Student expense or income record in euros.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["gasto", "ingreso"] },
+        "amount": { "type": "number" },
+        "date": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "categoryId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "note": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerId", "type", "amount", "date", "categoryId", "note", "createdAt", "updatedAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Expense/income category with minimalist line icon key and hex color.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "icon": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "color": { "type": "string", "minLength": 7, "maxLength": 7, "pattern": "^#[0-9a-fA-F]{6}$" },
+        "isCustom": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerId", "name", "icon", "color", "isCustom", "createdAt", "updatedAt"]
+    },
+    "SavingsGoal": {
+      "title": "SavingsGoal",
+      "description": "Student savings target with deadline and current saved amount.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "targetAmount": { "type": "number" },
+        "savedAmount": { "type": "number" },
+        "deadline": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "isPrimary": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerId", "name", "targetAmount", "savedAmount", "deadline", "isPrimary", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Authenticated user root document."
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/UserSettings" },
+      "description": "User preferences document (settingId = preferences)."
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "User's private expense and income transactions."
+    },
+    "/users/{userId}/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "User's custom and predefined categories."
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": { "$ref": "#/entities/SavingsGoal" },
+      "description": "User's savings goals."
+    }
+  }
+}

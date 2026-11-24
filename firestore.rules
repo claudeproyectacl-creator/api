@@ -1,0 +1,223 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserAccount(data, userId) {
+      return data.keys().hasAll(['uid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.uid == userId
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSettings(data, userId) {
+      return data.keys().hasAll(['ownerId', 'userName', 'theme', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'userName', 'monthlyLimit', 'theme', 'createdAt', 'updatedAt'])
+        && data.ownerId is string
+        && data.ownerId == userId
+        && data.userName is string
+        && data.userName.size() <= 40
+        && data.theme is string
+        && (data.theme == 'dark' || data.theme == 'light')
+        && (!('monthlyLimit' in data) || data.monthlyLimit == null || (data.monthlyLimit is number && data.monthlyLimit > 0 && data.monthlyLimit <= 1000000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTransaction(data, userId, transactionId) {
+      return data.keys().hasAll(['id', 'ownerId', 'type', 'amount', 'date', 'categoryId', 'note', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'type', 'amount', 'date', 'categoryId', 'note', 'createdAt', 'updatedAt'])
+        && data.id is string
+        && data.id == transactionId
+        && data.ownerId is string
+        && data.ownerId == userId
+        && data.type is string
+        && (data.type == 'gasto' || data.type == 'ingreso')
+        && data.amount is number
+        && data.amount > 0
+        && data.amount <= 1000000
+        && data.date is string
+        && data.date.size() == 10
+        && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && isValidId(data.categoryId)
+        && data.note is string
+        && data.note.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(data, userId, categoryId) {
+      return data.keys().hasAll(['id', 'ownerId', 'name', 'icon', 'color', 'isCustom', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'name', 'icon', 'color', 'isCustom', 'createdAt', 'updatedAt'])
+        && data.id is string
+        && data.id == categoryId
+        && data.ownerId is string
+        && data.ownerId == userId
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 32
+        && data.icon is string
+        && data.icon.size() >= 1
+        && data.icon.size() <= 24
+        && data.color is string
+        && data.color.size() == 7
+        && data.color.matches('^#[0-9a-fA-F]{6}$')
+        && data.isCustom is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidGoal(data, userId, goalId) {
+      return data.keys().hasAll(['id', 'ownerId', 'name', 'targetAmount', 'savedAmount', 'deadline', 'isPrimary', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'name', 'targetAmount', 'savedAmount', 'deadline', 'isPrimary', 'createdAt', 'updatedAt'])
+        && data.id is string
+        && data.id == goalId
+        && data.ownerId is string
+        && data.ownerId == userId
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 60
+        && data.targetAmount is number
+        && data.targetAmount > 0
+        && data.targetAmount <= 1000000
+        && data.savedAmount is number
+        && data.savedAmount >= 0
+        && data.savedAmount <= 1000000
+        && data.deadline is string
+        && data.deadline.size() == 10
+        && data.deadline.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.isPrimary is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserAccount(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserAccount(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt']);
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      match /settings/{settingId} {
+        allow get: if isValidId(userId) && isValidId(settingId) && settingId == 'preferences' && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(settingId)
+          && settingId == 'preferences'
+          && isOwner(userId)
+          && isValidSettings(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId)
+          && isValidId(settingId)
+          && settingId == 'preferences'
+          && isOwner(userId)
+          && isValidSettings(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['userName', 'monthlyLimit', 'theme', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(settingId) && isOwner(userId);
+      }
+
+      match /transactions/{transactionId} {
+        allow get: if isValidId(userId) && isValidId(transactionId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(transactionId)
+          && isOwner(userId)
+          && isValidTransaction(incoming(), userId, transactionId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId)
+          && isValidId(transactionId)
+          && isOwner(userId)
+          && isValidTransaction(incoming(), userId, transactionId)
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['type', 'amount', 'date', 'categoryId', 'note', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(transactionId) && isOwner(userId);
+      }
+
+      match /categories/{categoryId} {
+        allow get: if isValidId(userId) && isValidId(categoryId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(categoryId)
+          && isOwner(userId)
+          && isValidCategory(incoming(), userId, categoryId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId)
+          && isValidId(categoryId)
+          && isOwner(userId)
+          && isValidCategory(incoming(), userId, categoryId)
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'icon', 'color', 'isCustom', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(categoryId) && isOwner(userId);
+      }
+
+      match /goals/{goalId} {
+        allow get: if isValidId(userId) && isValidId(goalId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(goalId)
+          && isOwner(userId)
+          && isValidGoal(incoming(), userId, goalId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId)
+          && isValidId(goalId)
+          && isOwner(userId)
+          && isValidGoal(incoming(), userId, goalId)
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'targetAmount', 'savedAmount', 'deadline', 'isPrimary', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(goalId) && isOwner(userId);
+      }
+    }
+  }
+}
