@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
   ArrowLeftRight,
@@ -62,7 +62,6 @@ import { HomeSkeleton } from './components/HomeSkeleton';
 type TabKey = 'inicio' | 'movimientos' | 'ahorro' | 'asistente';
 type AuthStatus = 'checking' | 'authenticated' | 'local' | 'unauthenticated';
 
-const SPLASH_SEEN_KEY = 'findi_splash_seen';
 const LOCAL_MODE_KEY = 'findi_local_mode';
 const MIGRATION_FLAG_PREFIX = 'findi_migrated_';
 
@@ -86,12 +85,17 @@ export default function App() {
 
   const [showSplash, setShowSplash] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    const isMobile = window.innerWidth < 768;
-    const alreadySeen = window.sessionStorage.getItem(SPLASH_SEEN_KEY) === '1';
-    return isMobile && !alreadySeen;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('splash') === '1') return true;
+    return window.innerWidth < 768;
   });
+  const [splashRunId, setSplashRunId] = useState(0);
+  const [splashExiting, setSplashExiting] = useState(false);
+  const [revealEpoch, setRevealEpoch] = useState(0);
 
   const [authStatus, setAuthStatus] = useState<AuthStatus>('checking');
+  const authStatusRef = useRef<AuthStatus>('checking');
+  authStatusRef.current = authStatus;
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [isCloudLoading, setIsCloudLoading] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<Error | null>(null);
@@ -156,6 +160,7 @@ export default function App() {
           window.sessionStorage.getItem(LOCAL_MODE_KEY) === '1';
         if (wantsLocal) {
           setStore(loadStore());
+          authStatusRef.current = 'local';
           setAuthStatus('local');
         } else {
           const savedLocalTheme = loadStore().settings.theme;
@@ -163,15 +168,24 @@ export default function App() {
             ...createEmptyStore(),
             settings: { ...createEmptyStore().settings, theme: savedLocalTheme },
           });
+          authStatusRef.current = 'unauthenticated';
           setAuthStatus('unauthenticated');
         }
         return;
       }
 
+      const justSignedIn = authStatusRef.current === 'unauthenticated';
+      authStatusRef.current = 'authenticated';
       setFirebaseUser(user);
       setAuthStatus('authenticated');
       setIsCloudLoading(true);
       setCloudError(null);
+
+      if (justSignedIn) {
+        setSplashExiting(false);
+        setSplashRunId((n) => n + 1);
+        setShowSplash(true);
+      }
 
       try {
         await ensureUserAccountInitialized(user.uid);
@@ -250,13 +264,20 @@ export default function App() {
     throw cloudError;
   }
 
+  const handleSplashExitStart = useCallback(() => {
+    setSplashExiting(true);
+    setRevealEpoch((n) => n + 1);
+  }, []);
+
   const handleSplashComplete = useCallback(() => {
-    try {
-      window.sessionStorage.setItem(SPLASH_SEEN_KEY, '1');
-    } catch {
-      // Ignore storage errors
-    }
     setShowSplash(false);
+    setSplashExiting(false);
+  }, []);
+
+  const handleReplaySplash = useCallback(() => {
+    setSplashExiting(false);
+    setSplashRunId((n) => n + 1);
+    setShowSplash(true);
   }, []);
 
   const handleSplashRetry = useCallback(() => {
@@ -272,6 +293,7 @@ export default function App() {
       // Ignore storage errors
     }
     setStore(loadStore());
+    authStatusRef.current = 'local';
     setAuthStatus('local');
   }, []);
 
@@ -281,6 +303,7 @@ export default function App() {
     } catch {
       // Ignore storage errors
     }
+    authStatusRef.current = 'unauthenticated';
     setAuthStatus('unauthenticated');
   }, []);
 
@@ -623,32 +646,48 @@ export default function App() {
     authStatus === 'unauthenticated' ||
     (authStatus === 'authenticated' && !isCloudLoading && !cloudError);
 
-  if (showSplash) {
-    return (
-      <MobileSplash
-        isDataReady={splashDataReady}
-        onComplete={handleSplashComplete}
-        onRetry={handleSplashRetry}
-      />
-    );
-  }
+  const splashOverlay = (
+    <AnimatePresence>
+      {showSplash && (
+        <MobileSplash
+          key={splashRunId}
+          isDataReady={splashDataReady}
+          onExitStart={handleSplashExitStart}
+          onComplete={handleSplashComplete}
+          onRetry={handleSplashRetry}
+        />
+      )}
+    </AnimatePresence>
+  );
 
   if (authStatus === 'checking') {
     return (
       <div className="min-h-screen bg-[#f5f5f7] dark:bg-black px-4 sm:px-6 pt-16">
-        <div className="mx-auto max-w-6xl">
-          <HomeSkeleton />
-        </div>
+        {!showSplash && (
+          <div className="mx-auto max-w-6xl">
+            <HomeSkeleton />
+          </div>
+        )}
+        {splashOverlay}
       </div>
     );
   }
 
   if (authStatus === 'unauthenticated') {
-    return <AuthScreen onContinueLocal={handleContinueLocal} />;
+    return (
+      <>
+        <AuthScreen hideHeaderLogo={showSplash} onContinueLocal={handleContinueLocal} />
+        {splashOverlay}
+      </>
+    );
   }
+
+  const splashCoveringContent = showSplash && !splashExiting;
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] dark:bg-black dark:text-[#f5f5f7] transition-colors duration-300">
+      {splashOverlay}
+
       {/* Top Bar (3-zone contract) */}
       <header className="sticky top-0 z-30 h-14 border-b border-black/8 dark:border-[#282828] bg-[#f5f5f7]/85 dark:bg-[#0e0e0e]/85 backdrop-blur-md">
         <div className="mx-auto flex h-full max-w-6xl items-center justify-between gap-8 px-4 sm:px-6">
@@ -666,10 +705,15 @@ export default function App() {
               transition={{ duration: 0.25, ease: [0.28, 0.11, 0.32, 1] }}
               className="flex items-center"
             >
-              <FindiLogo
-                variant="compact"
-                celebrateCoin={celebrateCoin || (hasCompletedGoal && activeTab === 'ahorro')}
-              />
+              <div
+                data-findi-header-logo="true"
+                className={showSplash ? 'opacity-0' : 'opacity-100'}
+              >
+                <FindiLogo
+                  variant="compact"
+                  celebrateCoin={celebrateCoin || (hasCompletedGoal && activeTab === 'ahorro')}
+                />
+              </div>
             </motion.div>
             <span className="text-base font-semibold tracking-[-0.02em] text-[#1d1d1f] dark:text-[#f5f5f7]">
               FINDI
@@ -728,13 +772,18 @@ export default function App() {
 
       {/* Main Content */}
       <motion.main
-        initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.28, 0.11, 0.32, 1] }}
+        initial={shouldReduceMotion ? false : { opacity: 0, y: 14 }}
+        animate={
+          splashCoveringContent
+            ? { opacity: 0, y: shouldReduceMotion ? 0 : 18 }
+            : { opacity: 1, y: 0 }
+        }
+        transition={{ duration: shouldReduceMotion ? 0.2 : 0.45, ease: [0.28, 0.11, 0.32, 1] }}
         className="mx-auto max-w-6xl px-4 sm:px-6 pt-4 pb-24 md:pb-12"
       >
         {activeTab === 'inicio' && (
           <HomeView
+            key={revealEpoch}
             transactions={store.transactions}
             categories={store.categories}
             goals={store.goals}
@@ -857,10 +906,11 @@ export default function App() {
         onResetAllData={handleResetAllData}
         onSignOut={() => void handleSignOut()}
         onOpenLogin={handleOpenLogin}
+        onReplaySplash={handleReplaySplash}
       />
 
       <ConfirmModal
-        open={migrationPrompt !== null}
+        open={migrationPrompt !== null && !showSplash}
         title="¿Subir tus datos locales a tu cuenta?"
         description="Hemos encontrado movimientos u objetivos guardados en este dispositivo sin cuenta. ¿Quieres subirlos a tu cuenta en la nube o mantenerlos separados?"
         confirmLabel="Sí, subir a la nube"

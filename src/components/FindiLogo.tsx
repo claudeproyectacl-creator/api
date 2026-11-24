@@ -9,6 +9,45 @@ interface FindiLogoProps {
 
 const APPLE_EASE: [number, number, number, number] = [0.28, 0.11, 0.32, 1];
 
+export const FINDI_LOGO_COLORS = {
+  bookStops: [
+    { offset: '0%', color: '#10B981' },
+    { offset: '55%', color: '#059669' },
+    { offset: '100%', color: '#065F46' },
+  ],
+  leftCoverStops: [
+    { offset: '0%', color: '#10B981' },
+    { offset: '100%', color: '#059669' },
+  ],
+  rightCoverStops: [
+    { offset: '0%', color: '#059669' },
+    { offset: '100%', color: '#065F46' },
+  ],
+  coinStops: [
+    { offset: '0%', color: '#34D399' },
+    { offset: '50%', color: '#10B981' },
+    { offset: '100%', color: '#047857' },
+  ],
+  pageStops: [
+    { offset: '0%', color: '#FFFFFF' },
+    { offset: '100%', color: '#A7F3D0' },
+  ],
+} as const;
+
+export const FINDI_LOGO_PATHS = {
+  fullCover:
+    'M14 48C14 45.8 15.8 44 18 44H22V86C22 87.5 23.1 88.8 24.6 89.1L56.5 96.2C58.8 96.7 61.2 96.7 63.5 96.2L95.4 89.1C96.9 88.8 98 87.5 98 86V44H102C104.2 44 106 45.8 106 48V90C106 92.4 104.3 94.5 101.9 95L64.8 103.5C63.6 105.6 61.9 107 60 107C58.1 107 56.4 105.6 55.2 103.5L18.1 95C15.7 94.5 14 92.4 14 90V48Z',
+  leftCover:
+    'M14 48C14 45.8 15.8 44 18 44H22V86C22 87.5 23.1 88.8 24.6 89.1L56.5 96.2C57.8 96.5 59 96.6 60 96.6V107C58.1 107 56.4 105.6 55.2 103.5L18.1 95C15.7 94.5 14 92.4 14 90V48Z',
+  rightCover:
+    'M60 96.6C61 96.6 62.2 96.5 63.5 96.2L95.4 89.1C96.9 88.8 98 87.5 98 86V44H102C104.2 44 106 45.8 106 48V90C106 92.4 104.3 94.5 101.9 95L64.8 103.5C63.6 105.6 61.9 107 60 107V96.6Z',
+  leftPage: 'M25 43C36 43 50 47 59 56V93C49 87 36 85 25 85V43Z',
+  rightPage: 'M95 43C84 43 70 47 61 56V93C71 87 84 85 95 85V43Z',
+  spine: 'M59 56V94M61 56V94',
+  leftPageLine: 'M32 54H48',
+  rightPageLine: 'M72 54H88',
+} as const;
+
 export function FindiLogo({
   variant = 'hero',
   celebrateCoin = false,
@@ -53,49 +92,47 @@ export function FindiLogo({
         >
           <defs>
             <linearGradient id={bookGradId} x1="12" y1="36" x2="108" y2="106" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stopColor="#10B981" />
-              <stop offset="55%" stopColor="#059669" />
-              <stop offset="100%" stopColor="#065F46" />
+              {FINDI_LOGO_COLORS.bookStops.map((s) => (
+                <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+              ))}
             </linearGradient>
             <linearGradient id={coinGradId} x1="36" y1="10" x2="84" y2="58" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stopColor="#34D399" />
-              <stop offset="50%" stopColor="#10B981" />
-              <stop offset="100%" stopColor="#047857" />
+              {FINDI_LOGO_COLORS.coinStops.map((s) => (
+                <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+              ))}
             </linearGradient>
             <linearGradient id={pageGradId} x1="60" y1="44" x2="60" y2="94" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stopColor="#FFFFFF" />
-              <stop offset="100%" stopColor="#A7F3D0" />
+              {FINDI_LOGO_COLORS.pageStops.map((s) => (
+                <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+              ))}
             </linearGradient>
           </defs>
 
           {/* Open Book Base */}
           <g>
+            <path d={FINDI_LOGO_PATHS.fullCover} fill={`url(#${bookGradId})`} />
             <path
-              d="M14 48C14 45.8 15.8 44 18 44H22V86C22 87.5 23.1 88.8 24.6 89.1L56.5 96.2C58.8 96.7 61.2 96.7 63.5 96.2L95.4 89.1C96.9 88.8 98 87.5 98 86V44H102C104.2 44 106 45.8 106 48V90C106 92.4 104.3 94.5 101.9 95L64.8 103.5C63.6 105.6 61.9 107 60 107C58.1 107 56.4 105.6 55.2 103.5L18.1 95C15.7 94.5 14 92.4 14 90V48Z"
-              fill={`url(#${bookGradId})`}
-            />
-            <path
-              d="M25 43C36 43 50 47 59 56V93C49 87 36 85 25 85V43Z"
+              d={FINDI_LOGO_PATHS.leftPage}
               fill={`url(#${pageGradId})`}
               stroke="#059669"
               strokeWidth="2.5"
               strokeLinejoin="round"
             />
             <path
-              d="M95 43C84 43 70 47 61 56V93C71 87 84 85 95 85V43Z"
+              d={FINDI_LOGO_PATHS.rightPage}
               fill={`url(#${pageGradId})`}
               stroke="#059669"
               strokeWidth="2.5"
               strokeLinejoin="round"
             />
             <path
-              d="M59 56V94M61 56V94"
+              d={FINDI_LOGO_PATHS.spine}
               stroke="#065F46"
               strokeWidth="2"
               strokeLinecap="round"
             />
             <path
-              d="M32 54H48M72 54H88"
+              d={`${FINDI_LOGO_PATHS.leftPageLine}${FINDI_LOGO_PATHS.rightPageLine}`}
               stroke="#059669"
               strokeWidth="2.4"
               strokeLinecap="round"
@@ -168,4 +205,3 @@ export function FindiLogo({
     </div>
   );
 }
-

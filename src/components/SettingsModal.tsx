@@ -10,6 +10,7 @@ import {
   LogOut,
   MapPin,
   Moon,
+  Play,
   Sun,
   Trash2,
   X,
@@ -32,6 +33,7 @@ interface SettingsModalProps {
   onResetAllData: () => void;
   onSignOut: () => void;
   onOpenLogin: () => void;
+  onReplaySplash: () => void;
 }
 
 export function SettingsModal({
@@ -44,6 +46,7 @@ export function SettingsModal({
   onResetAllData,
   onSignOut,
   onOpenLogin,
+  onReplaySplash,
 }: SettingsModalProps) {
   const shouldReduceMotion = useReducedMotion();
 
@@ -210,6 +213,17 @@ export function SettingsModal({
                   Modo claro
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onReplaySplash();
+                }}
+                className="mt-2.5 flex w-full min-h-[44px] items-center justify-center gap-2 rounded-full border border-black/15 dark:border-[#6e6e73] px-4 py-2 text-xs font-medium text-[#1d1d1f] dark:text-[#f5f5f7] hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.97] transition-transform"
+              >
+                <Play className="w-3.5 h-3.5 text-[#10B981]" />
+                Ver animación de carga
+              </button>
             </div>
 
             {error && <p className="text-sm font-medium text-[#EF4444]">{error}</p>}

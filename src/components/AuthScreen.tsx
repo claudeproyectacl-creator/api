@@ -12,6 +12,7 @@ import { auth, googleProvider } from '../services/firebase';
 import { FindiLogo } from './FindiLogo';
 
 interface AuthScreenProps {
+  hideHeaderLogo?: boolean;
   onContinueLocal: () => void;
 }
 
@@ -47,7 +48,7 @@ function mapFirebaseAuthError(err: unknown): string {
   }
 }
 
-export function AuthScreen({ onContinueLocal }: AuthScreenProps) {
+export function AuthScreen({ hideHeaderLogo = false, onContinueLocal }: AuthScreenProps) {
   const shouldReduceMotion = useReducedMotion();
 
   const [mode, setMode] = useState<AuthMode>('login');
@@ -148,7 +149,12 @@ export function AuthScreen({ onContinueLocal }: AuthScreenProps) {
         </button>
 
         <div className="flex items-center gap-2">
-          <FindiLogo variant="compact" />
+          <div
+            data-findi-header-logo="true"
+            className={hideHeaderLogo ? 'opacity-0' : 'opacity-100'}
+          >
+            <FindiLogo variant="compact" />
+          </div>
           <span className="text-sm font-semibold tracking-tight">FINDI</span>
         </div>
       </div>

@@ -1,26 +1,44 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { RotateCcw } from 'lucide-react';
+import { FINDI_LOGO_COLORS, FINDI_LOGO_PATHS } from './FindiLogo';
 
 interface MobileSplashProps {
   isDataReady: boolean;
+  onExitStart?: () => void;
   onComplete: () => void;
   onRetry: () => void;
 }
 
+interface DockTransform {
+  x: number;
+  y: number;
+  scale: number;
+}
+
 const APPLE_EASE: [number, number, number, number] = [0.28, 0.11, 0.32, 1];
 
-export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashProps) {
+export function MobileSplash({
+  isDataReady,
+  onExitStart,
+  onComplete,
+  onRetry,
+}: MobileSplashProps) {
   const shouldReduceMotion = useReducedMotion();
   const uid = useId().replace(/:/g, '');
+  const splashLogoRef = useRef<HTMLDivElement | null>(null);
+
+  const [attemptId, setAttemptId] = useState(0);
   const [minElapsed, setMinElapsed] = useState(false);
   const [waitingTooLong, setWaitingTooLong] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const [exiting, setExiting] = useState(false);
+  const [dockTransform, setDockTransform] = useState<DockTransform | null>(null);
 
+  // Manage sequence timers cleanly on mount, retry, and unmount
   useEffect(() => {
-    const minMs = shouldReduceMotion ? 450 : 2000;
-    const pulseMs = 2500;
+    const minMs = shouldReduceMotion ? 320 : 2000;
+    const pulseMs = 2050;
     const timeoutMs = 8000;
 
     const minTimer = window.setTimeout(() => setMinElapsed(true), minMs);
@@ -32,26 +50,57 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
       window.clearTimeout(pulseTimer);
       window.clearTimeout(failTimer);
     };
-  }, [shouldReduceMotion]);
+  }, [attemptId, shouldReduceMotion]);
 
+  // Trigger real dock flight when data is ready and min duration elapsed
   useEffect(() => {
-    if (isDataReady && minElapsed && !exiting && !timedOut) {
-      setExiting(true);
-      const finishMs = shouldReduceMotion ? 300 : 580;
-      const doneTimer = window.setTimeout(() => {
-        onComplete();
-      }, finishMs);
-      return () => window.clearTimeout(doneTimer);
+    if (!isDataReady || !minElapsed || exiting || timedOut) return;
+
+    if (!shouldReduceMotion && splashLogoRef.current) {
+      const targetEl = document.querySelector(
+        '[data-findi-header-logo="true"]'
+      ) as HTMLElement | null;
+
+      if (targetEl) {
+        const sourceRect = splashLogoRef.current.getBoundingClientRect();
+        const targetRect = targetEl.getBoundingClientRect();
+        if (sourceRect.width > 0 && targetRect.width > 0) {
+          const sourceCenterX = sourceRect.left + sourceRect.width / 2;
+          const sourceCenterY = sourceRect.top + sourceRect.height / 2;
+          const targetCenterX = targetRect.left + targetRect.width / 2;
+          const targetCenterY = targetRect.top + targetRect.height / 2;
+
+          setDockTransform({
+            x: targetCenterX - sourceCenterX,
+            y: targetCenterY - sourceCenterY,
+            scale: targetRect.width / sourceRect.width,
+          });
+        }
+      }
     }
-  }, [isDataReady, minElapsed, exiting, timedOut, shouldReduceMotion, onComplete]);
+
+    setExiting(true);
+    onExitStart?.();
+  }, [isDataReady, minElapsed, exiting, timedOut, shouldReduceMotion, onExitStart]);
+
+  // Finish splash cleanly once exit animation settles
+  useEffect(() => {
+    if (!exiting) return;
+    const finishMs = shouldReduceMotion ? 300 : 660;
+    const doneTimer = window.setTimeout(() => {
+      onComplete();
+    }, finishMs);
+    return () => window.clearTimeout(doneTimer);
+  }, [exiting, shouldReduceMotion, onComplete]);
 
   const handleRetryClick = () => {
     setTimedOut(false);
     setWaitingTooLong(false);
     setMinElapsed(false);
+    setExiting(false);
+    setDockTransform(null);
+    setAttemptId((prev) => prev + 1);
     onRetry();
-    window.setTimeout(() => setMinElapsed(true), shouldReduceMotion ? 450 : 2000);
-    window.setTimeout(() => setTimedOut(true), 8000);
   };
 
   const bookGradL = `splashBookL-${uid}`;
@@ -60,83 +109,102 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
   const pageGradR = `splashPageR-${uid}`;
   const coinGrad = `splashCoin-${uid}`;
 
+  const logoExitTarget = shouldReduceMotion
+    ? { opacity: 0 }
+    : dockTransform
+      ? {
+          x: dockTransform.x,
+          y: dockTransform.y,
+          scale: dockTransform.scale,
+          opacity: 1,
+        }
+      : {
+          scale: 0.25,
+          opacity: 0,
+        };
+
   return (
-    <motion.div
-      initial={{ opacity: 1 }}
-      animate={{ opacity: exiting ? 0 : 1 }}
-      transition={{ duration: shouldReduceMotion ? 0.3 : 0.45, ease: APPLE_EASE }}
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#f5f5f7] dark:bg-black px-6 select-none overflow-hidden"
+    <div
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center select-none overflow-hidden pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))]"
       role="status"
       aria-live="polite"
       aria-label="Cargando FINDI"
     >
-      {/* Center Emerald Glow (0 - 0.4s fade in, pulses once around 1.4s) */}
+      {/* Clean backdrop that fades away during dock transition */}
       <motion.div
         aria-hidden="true"
-        initial={shouldReduceMotion ? { opacity: 0.45 } : { opacity: 0, scale: 0.82 }}
+        initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0.92 }}
+        animate={{ opacity: exiting ? 0 : 1 }}
+        transition={{
+          duration: shouldReduceMotion ? 0.3 : exiting ? 0.56 : 0.35,
+          ease: APPLE_EASE,
+        }}
+        className="absolute inset-0 bg-[#f5f5f7] dark:bg-black"
+      />
+
+      {/* Center Emerald Glow (0 - 0.4s fade in, pulses once as coin rises) */}
+      <motion.div
+        aria-hidden="true"
+        initial={shouldReduceMotion ? { opacity: 0.45 } : { opacity: 0, scale: 0.84 }}
         animate={
           shouldReduceMotion
             ? { opacity: exiting ? 0 : 0.45 }
             : exiting
-              ? { opacity: 0, scale: 0.7 }
+              ? { opacity: 0, scale: 0.72 }
               : {
-                  opacity: [0, 0.48, 0.72, 0.48],
-                  scale: [0.82, 1, 1.14, 1],
+                  opacity: [0, 0.55, 0.8, 0.52],
+                  scale: [0.84, 1, 1.15, 1],
                 }
         }
         transition={
           shouldReduceMotion
             ? { duration: 0.3 }
             : exiting
-              ? { duration: 0.4, ease: APPLE_EASE }
+              ? { duration: 0.42, ease: APPLE_EASE }
               : {
                   duration: 1.9,
                   times: [0, 0.22, 0.74, 1],
                   ease: APPLE_EASE,
                 }
         }
-        className="pointer-events-none absolute h-64 w-64 rounded-full bg-[radial-gradient(circle,rgba(16,185,129,0.34)_0%,rgba(16,185,129,0)_72%)]"
+        className="pointer-events-none absolute h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(16,185,129,0.34)_0%,rgba(16,185,129,0)_72%)]"
       />
 
-      {/* Logo Assembly (transitions smoothly toward top-left bar on exit) */}
+      {/* Logo Assembly (~200px wide, travels accurately to header logo) */}
       <motion.div
-        layoutId="findi-brand-logo"
+        ref={splashLogoRef}
         initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 1, scale: 1, x: 0, y: 0 }}
         animate={
-          shouldReduceMotion
-            ? { opacity: exiting ? 0 : 1 }
-            : exiting
-              ? {
-                  scale: 0.29,
-                  x: '-38vw',
-                  y: '-43vh',
-                  opacity: 0.2,
-                }
-              : { scale: 1, x: 0, y: 0, opacity: 1 }
+          exiting
+            ? logoExitTarget
+            : shouldReduceMotion
+              ? { opacity: 1 }
+              : { opacity: 1, scale: 1, x: 0, y: 0 }
         }
         transition={{
-          duration: shouldReduceMotion ? 0.3 : 0.56,
+          duration: shouldReduceMotion ? 0.3 : exiting ? 0.65 : 0.3,
           ease: APPLE_EASE,
         }}
-        className="relative flex items-center justify-center will-change-transform"
-        style={{ perspective: 700 }}
+        className="relative z-10 flex items-center justify-center will-change-transform"
+        style={{ perspective: 800 }}
       >
-        <div className="relative h-[120px] w-[120px]">
-          {/* Animated Coin rising from between pages with $ symbol (1.2 - 1.9s) */}
+        <div className="relative h-[200px] w-[200px]">
+          {/* Animated Coin rising from between pages with large, crisp $ (1.2 - 1.9s) */}
           <motion.svg
-            width="120"
-            height="120"
+            width="200"
+            height="200"
             viewBox="0 0 120 120"
             fill="none"
             className="absolute inset-0 overflow-visible"
+            style={{ transformOrigin: '60px 35px' }}
             initial={
               shouldReduceMotion
-                ? { opacity: 1, y: 0 }
-                : { opacity: 0, y: 34, scale: 0.85, rotateY: -35 }
+                ? { opacity: 1, y: 0, scale: 1, rotateY: 0 }
+                : { opacity: 0, y: 42, scale: 0.76, rotateY: 0 }
             }
             animate={
               shouldReduceMotion
-                ? { opacity: 1, y: 0 }
+                ? { opacity: 1, y: 0, scale: 1, rotateY: 0 }
                 : waitingTooLong && !isDataReady && !timedOut
                   ? {
                       opacity: 1,
@@ -146,9 +214,9 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
                     }
                   : {
                       opacity: [0, 1, 1, 1],
-                      y: [34, -5, 2, 0],
-                      scale: [0.85, 1.04, 0.99, 1],
-                      rotateY: [-35, 12, 0, 0],
+                      y: [42, -7, 2, 0],
+                      scale: [0.76, 1.07, 0.98, 1],
+                      rotateY: [0, 210, 360, 360],
                     }
             }
             transition={
@@ -157,18 +225,18 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
                 : waitingTooLong && !isDataReady && !timedOut
                   ? { duration: 1.2, repeat: Infinity, ease: 'easeInOut' }
                   : {
-                      delay: 1.15,
+                      delay: 1.18,
                       duration: 0.72,
-                      times: [0, 0.55, 0.8, 1],
+                      times: [0, 0.56, 0.82, 1],
                       ease: APPLE_EASE,
                     }
             }
           >
             <defs>
               <linearGradient id={coinGrad} x1="36" y1="10" x2="84" y2="58" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#34D399" />
-                <stop offset="50%" stopColor="#10B981" />
-                <stop offset="100%" stopColor="#047857" />
+                {FINDI_LOGO_COLORS.coinStops.map((s) => (
+                  <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+                ))}
               </linearGradient>
             </defs>
             <circle
@@ -185,29 +253,17 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
               r="17.5"
               stroke="#D1FAE5"
               strokeWidth="1.2"
-              opacity="0.75"
-            />
-            <path
-              d="M52.5 40.5L60 21.5L67.5 40.5"
-              stroke="#FFFFFF"
-              strokeWidth="2.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M54.5 36C57.5 34 62.5 32.5 66.5 30"
-              stroke="#FFFFFF"
-              strokeWidth="2.2"
-              strokeLinecap="round"
+              opacity="0.82"
             />
             <text
               x="60"
-              y="48"
+              y="36"
+              dominantBaseline="central"
               textAnchor="middle"
               fill="#FFFFFF"
-              fontSize="10"
+              fontSize="26"
               fontWeight="700"
-              fontFamily="Inter, sans-serif"
+              fontFamily="Inter, system-ui, sans-serif"
             >
               $
             </text>
@@ -215,43 +271,42 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
 
           {/* Left Book Wing opening from spine (0.3 - 1.4s) */}
           <motion.svg
-            width="120"
-            height="120"
+            width="200"
+            height="200"
             viewBox="0 0 120 120"
             fill="none"
             className="absolute inset-0 overflow-visible"
             style={{ transformOrigin: '60px 76px' }}
-            initial={shouldReduceMotion ? { rotateY: 0, opacity: 1 } : { rotateY: 82, opacity: 0.4 }}
+            initial={shouldReduceMotion ? { rotateY: 0, opacity: 1 } : { rotateY: 85, opacity: 0.35 }}
             animate={{ rotateY: 0, opacity: 1 }}
             transition={{
               delay: shouldReduceMotion ? 0 : 0.3,
-              duration: shouldReduceMotion ? 0.3 : 1.05,
+              duration: shouldReduceMotion ? 0.3 : 1.08,
               ease: APPLE_EASE,
             }}
           >
             <defs>
               <linearGradient id={bookGradL} x1="12" y1="36" x2="60" y2="106" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#10B981" />
-                <stop offset="100%" stopColor="#059669" />
+                {FINDI_LOGO_COLORS.leftCoverStops.map((s) => (
+                  <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+                ))}
               </linearGradient>
               <linearGradient id={pageGradL} x1="42" y1="44" x2="42" y2="94" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#FFFFFF" />
-                <stop offset="100%" stopColor="#A7F3D0" />
+                {FINDI_LOGO_COLORS.pageStops.map((s) => (
+                  <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+                ))}
               </linearGradient>
             </defs>
+            <path d={FINDI_LOGO_PATHS.leftCover} fill={`url(#${bookGradL})`} />
             <path
-              d="M14 48C14 45.8 15.8 44 18 44H22V86C22 87.5 23.1 88.8 24.6 89.1L56.5 96.2C57.8 96.5 59 96.6 60 96.6V107C58.1 107 56.4 105.6 55.2 103.5L18.1 95C15.7 94.5 14 92.4 14 90V48Z"
-              fill={`url(#${bookGradL})`}
-            />
-            <path
-              d="M25 43C36 43 50 47 59 56V93C49 87 36 85 25 85V43Z"
+              d={FINDI_LOGO_PATHS.leftPage}
               fill={`url(#${pageGradL})`}
               stroke="#059669"
               strokeWidth="2.5"
               strokeLinejoin="round"
             />
             <path
-              d="M32 54H48"
+              d={FINDI_LOGO_PATHS.leftPageLine}
               stroke="#059669"
               strokeWidth="2.4"
               strokeLinecap="round"
@@ -261,43 +316,42 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
 
           {/* Right Book Wing opening from spine (0.3 - 1.4s) */}
           <motion.svg
-            width="120"
-            height="120"
+            width="200"
+            height="200"
             viewBox="0 0 120 120"
             fill="none"
             className="absolute inset-0 overflow-visible"
             style={{ transformOrigin: '60px 76px' }}
-            initial={shouldReduceMotion ? { rotateY: 0, opacity: 1 } : { rotateY: -82, opacity: 0.4 }}
+            initial={shouldReduceMotion ? { rotateY: 0, opacity: 1 } : { rotateY: -85, opacity: 0.35 }}
             animate={{ rotateY: 0, opacity: 1 }}
             transition={{
               delay: shouldReduceMotion ? 0 : 0.3,
-              duration: shouldReduceMotion ? 0.3 : 1.05,
+              duration: shouldReduceMotion ? 0.3 : 1.08,
               ease: APPLE_EASE,
             }}
           >
             <defs>
               <linearGradient id={bookGradR} x1="60" y1="36" x2="108" y2="106" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#059669" />
-                <stop offset="100%" stopColor="#065F46" />
+                {FINDI_LOGO_COLORS.rightCoverStops.map((s) => (
+                  <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+                ))}
               </linearGradient>
               <linearGradient id={pageGradR} x1="78" y1="44" x2="78" y2="94" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#FFFFFF" />
-                <stop offset="100%" stopColor="#A7F3D0" />
+                {FINDI_LOGO_COLORS.pageStops.map((s) => (
+                  <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+                ))}
               </linearGradient>
             </defs>
+            <path d={FINDI_LOGO_PATHS.rightCover} fill={`url(#${bookGradR})`} />
             <path
-              d="M60 96.6C61 96.6 62.2 96.5 63.5 96.2L95.4 89.1C96.9 88.8 98 87.5 98 86V44H102C104.2 44 106 45.8 106 48V90C106 92.4 104.3 94.5 101.9 95L64.8 103.5C63.6 105.6 61.9 107 60 107V96.6Z"
-              fill={`url(#${bookGradR})`}
-            />
-            <path
-              d="M95 43C84 43 70 47 61 56V93C71 87 84 85 95 85V43Z"
+              d={FINDI_LOGO_PATHS.rightPage}
               fill={`url(#${pageGradR})`}
               stroke="#059669"
               strokeWidth="2.5"
               strokeLinejoin="round"
             />
             <path
-              d="M72 54H88"
+              d={FINDI_LOGO_PATHS.rightPageLine}
               stroke="#059669"
               strokeWidth="2.4"
               strokeLinecap="round"
@@ -307,14 +361,14 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
 
           {/* Center Spine Anchor */}
           <svg
-            width="120"
-            height="120"
+            width="200"
+            height="200"
             viewBox="0 0 120 120"
             fill="none"
             className="pointer-events-none absolute inset-0"
           >
             <path
-              d="M59 56V94M61 56V94"
+              d={FINDI_LOGO_PATHS.spine}
               stroke="#065F46"
               strokeWidth="2"
               strokeLinecap="round"
@@ -323,19 +377,19 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
         </div>
       </motion.div>
 
-      {/* Status text or timeout retry */}
+      {/* High-contrast loading label or timeout retry */}
       {!timedOut ? (
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: exiting ? 0 : 1 }}
-          transition={{ duration: 0.3, delay: shouldReduceMotion ? 0 : 0.25 }}
-          className="mt-6 text-xs font-medium tracking-wide text-[#6e6e73] dark:text-[#86868b]"
+          transition={{ duration: 0.28, delay: shouldReduceMotion ? 0 : 0.25 }}
+          className="relative z-10 mt-8 text-sm font-medium tracking-wide text-[#3a3a3c] dark:text-[#d1d1d6]"
         >
           Cargando tus datos…
         </motion.p>
       ) : (
-        <div className="mt-6 max-w-xs text-center space-y-3">
-          <p className="text-sm text-[#EF4444]">
+        <div className="relative z-10 mt-8 max-w-xs text-center space-y-3">
+          <p className="text-sm font-medium text-[#EF4444]">
             No hemos podido cargar tus datos en este momento. Comprueba tu conexión.
           </p>
           <button
@@ -348,6 +402,6 @@ export function MobileSplash({ isDataReady, onComplete, onRetry }: MobileSplashP
           </button>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }
